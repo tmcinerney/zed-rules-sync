@@ -127,3 +127,41 @@ pub fn is_zed_running() -> bool {
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::{is_managed, prompt_id_for_filename};
+    use tempfile::TempDir;
+
+    #[test]
+    fn upsert_list_delete_round_trip() {
+        let tmp = TempDir::new().unwrap();
+        let db_path = tmp.path().join("prompts");
+        let db = RulesDb::open(&db_path).unwrap();
+
+        let id = prompt_id_for_filename("code-style.md");
+        db.upsert_rule(id, "Code Style", false, "body content")
+            .unwrap();
+
+        assert!(db.has_rule(&id).unwrap());
+        let entries = db.list_rules().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].metadata.title.as_deref(), Some("Code Style"));
+        assert!(is_managed(
+            &entries[0].id,
+            entries[0].metadata.title.as_deref(),
+        ));
+
+        db.delete_rule(id).unwrap();
+        assert!(!db.has_rule(&id).unwrap());
+        assert_eq!(db.list_rules().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn readonly_open_surfaces_missing_path() {
+        let tmp = TempDir::new().unwrap();
+        let missing = tmp.path().join("does-not-exist");
+        assert!(RulesDb::open_readonly(&missing).is_err());
+    }
+}

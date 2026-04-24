@@ -38,6 +38,9 @@ enum Commands {
         /// Show what would happen without making changes
         #[arg(long)]
         dry_run: bool,
+        /// Recursively walk subdirectories for .md files
+        #[arg(long, short = 'r')]
+        recursive: bool,
     },
     /// Remove rules from the Rules Library
     Remove {
@@ -62,7 +65,8 @@ fn main() -> Result<()> {
             default,
             prune,
             dry_run,
-        } => cmd_sync(&db_path, &path, default, prune, dry_run),
+            recursive,
+        } => cmd_sync(&db_path, &path, default, prune, dry_run, recursive),
         Commands::Remove {
             title_or_uuid,
             managed,
@@ -104,8 +108,9 @@ fn cmd_sync(
     default: bool,
     prune: bool,
     dry_run: bool,
+    recursive: bool,
 ) -> Result<()> {
-    let md_files = collect_md_files(path)?;
+    let md_files = collect_md_files(path, recursive)?;
     if md_files.is_empty() {
         println!("No .md files found at {}", path.display());
         return Ok(());
@@ -237,7 +242,7 @@ fn cmd_remove(
     Ok(())
 }
 
-fn collect_md_files(path: &PathBuf) -> Result<Vec<(String, PathBuf)>> {
+fn collect_md_files(path: &PathBuf, recursive: bool) -> Result<Vec<(String, PathBuf)>> {
     if path.is_file() {
         let name = path
             .file_name()
@@ -254,13 +259,125 @@ fn collect_md_files(path: &PathBuf) -> Result<Vec<(String, PathBuf)>> {
         anyhow::bail!("not a file or directory: {}", path.display());
     }
     let mut files: Vec<(String, PathBuf)> = Vec::new();
-    for entry in std::fs::read_dir(path)? {
-        let entry = entry?;
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.ends_with(".md") && entry.file_type()?.is_file() {
-            files.push((name, entry.path()));
+    if recursive {
+        walk_md_files(path, &mut files)?;
+        check_duplicate_basenames(&files)?;
+    } else {
+        for entry in std::fs::read_dir(path)? {
+            let entry = entry?;
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".md") && entry.file_type()?.is_file() {
+                files.push((name, entry.path()));
+            }
         }
     }
-    files.sort_by(|a, b| a.0.cmp(&b.0));
+    files.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
     Ok(files)
+}
+
+fn walk_md_files(dir: &PathBuf, out: &mut Vec<(String, PathBuf)>) -> Result<()> {
+    for entry in std::fs::read_dir(dir)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            continue;
+        }
+        let path = entry.path();
+        if file_type.is_dir() {
+            walk_md_files(&path, out)?;
+        } else if file_type.is_file() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".md") {
+                out.push((name, path));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_duplicate_basenames(files: &[(String, PathBuf)]) -> Result<()> {
+    use std::collections::BTreeMap;
+    let mut groups: BTreeMap<&str, Vec<&PathBuf>> = BTreeMap::new();
+    for (name, path) in files {
+        groups.entry(name.as_str()).or_default().push(path);
+    }
+    for (name, paths) in groups {
+        if paths.len() > 1 {
+            let mut sorted: Vec<&PathBuf> = paths;
+            sorted.sort();
+            let mut msg = format!("duplicate filename \"{}\" at:", name);
+            for p in sorted {
+                msg.push_str(&format!("\n  {}", p.display()));
+            }
+            anyhow::bail!(msg);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn recursive_collects_nested_files() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        fs::write(root.join("top.md"), "top").unwrap();
+        let sub = root.join("sub");
+        fs::create_dir(&sub).unwrap();
+        fs::write(sub.join("nested.md"), "nested").unwrap();
+        let deeper = sub.join("deeper");
+        fs::create_dir(&deeper).unwrap();
+        fs::write(deeper.join("deep.md"), "deep").unwrap();
+        fs::write(root.join("ignored.txt"), "ignored").unwrap();
+
+        let files = collect_md_files(&root.to_path_buf(), true).unwrap();
+        let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["deep.md", "nested.md", "top.md"]);
+    }
+
+    #[test]
+    fn non_recursive_skips_subdirectories() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        fs::write(root.join("top.md"), "top").unwrap();
+        let sub = root.join("sub");
+        fs::create_dir(&sub).unwrap();
+        fs::write(sub.join("nested.md"), "nested").unwrap();
+
+        let files = collect_md_files(&root.to_path_buf(), false).unwrap();
+        let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["top.md"]);
+    }
+
+    #[test]
+    fn recursive_errors_on_duplicate_basename() {
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let a = root.join("a");
+        let b = root.join("b");
+        fs::create_dir(&a).unwrap();
+        fs::create_dir(&b).unwrap();
+        let a_path = a.join("foo.md");
+        let b_path = b.join("foo.md");
+        fs::write(&a_path, "a").unwrap();
+        fs::write(&b_path, "b").unwrap();
+
+        let err =
+            collect_md_files(&root.to_path_buf(), true).expect_err("expected duplicate error");
+        let msg = format!("{}", err);
+        assert!(
+            msg.contains("duplicate filename \"foo.md\""),
+            "msg: {}",
+            msg
+        );
+        assert!(msg.contains(&a_path.display().to_string()), "msg: {}", msg);
+        assert!(msg.contains(&b_path.display().to_string()), "msg: {}", msg);
+        let a_idx = msg.find(&a_path.display().to_string()).unwrap();
+        let b_idx = msg.find(&b_path.display().to_string()).unwrap();
+        assert!(a_idx < b_idx, "paths should be sorted: {}", msg);
+    }
 }

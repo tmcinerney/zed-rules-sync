@@ -115,7 +115,16 @@ zed-rules-sync sync ./rules --default --prune
 
 # Preview what would happen without writing
 zed-rules-sync sync ./rules --dry-run
+
+# Recursively walk subdirectories for .md files
+zed-rules-sync sync ./rules --recursive
 ```
+
+When `--recursive` is set, subdirectories of the source path are walked for
+`.md` files. Because rule UUIDs are derived from filenames alone, two files
+with the same basename (e.g. `rules/a/foo.md` and `rules/b/foo.md`) would
+collide — `sync` errors out and lists both paths rather than overwriting one
+with the other.
 
 ### `list`
 

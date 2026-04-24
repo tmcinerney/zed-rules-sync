@@ -35,16 +35,6 @@
 
           # lmdb-master-sys compiles LMDB from bundled C source via the cc crate.
           nativeBuildInputs = with pkgs; [ pkg-config ];
-
-          buildInputs =
-            [ ]
-            ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin (
-              with pkgs.darwin.apple_sdk.frameworks;
-              [
-                Security
-                SystemConfiguration
-              ]
-            );
         };
     in
     {
@@ -70,6 +60,7 @@
             packages = with pkgs; [
               rust-analyzer
               clippy
+              rustfmt
             ];
           };
         }

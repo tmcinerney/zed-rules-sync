@@ -37,7 +37,10 @@ nix run github:tmcinerney/zed-rules-sync -- list
 ```nix
 # flake.nix
 {
-  inputs.zed-rules-sync.url = "github:tmcinerney/zed-rules-sync";
+  inputs.zed-rules-sync = {
+    url = "github:tmcinerney/zed-rules-sync";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
 
   outputs = { self, nixpkgs, zed-rules-sync, ... }: {
     # Option A: use the overlay
@@ -51,12 +54,20 @@ nix run github:tmcinerney/zed-rules-sync -- list
 }
 ```
 
+The `inputs.nixpkgs.follows = "nixpkgs"` line makes `zed-rules-sync`
+share your system's nixpkgs rather than pulling in a second copy.
+Without it, your closure grows and the two nixpkgs versions can
+drift.
+
 ### Home Manager module
 
 ```nix
 # flake.nix
 {
-  inputs.zed-rules-sync.url = "github:tmcinerney/zed-rules-sync";
+  inputs.zed-rules-sync = {
+    url = "github:tmcinerney/zed-rules-sync";
+    inputs.nixpkgs.follows = "nixpkgs";
+  };
 
   outputs = { self, nixpkgs, home-manager, zed-rules-sync, ... }: {
     homeConfigurations."user" = home-manager.lib.homeManagerConfiguration {

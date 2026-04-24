@@ -159,6 +159,29 @@ zed-rules-sync remove "My Rule Title"
 - **Schema version checking** — validates the LMDB database structure before
   writing to prevent data corruption if Zed changes its internal format.
 
+## Coexisting with Rules You Created in Zed's UI
+
+The tool's safety guarantees are UUID-based, not title-based. Every rule in Zed's
+prompt store has a UUID — `zed-rules-sync` derives its UUIDs deterministically
+from filenames in a fixed namespace, while rules you create through Zed's UI get
+random UUIDs. Two rules can share a title without conflicting.
+
+If you manually create a rule titled `Code Style` in Zed, then sync a
+`code-style.md` file, both rules coexist. The `MANAGED` column in
+`zed-rules-sync list` tells you which is which:
+
+```
+zed-rules-sync list
+TITLE         DEFAULT  MANAGED  UUID
+code-style    no       yes      ...
+Code Style    no       no       ...
+```
+
+- `remove` matches by title and works on either kind, so
+  `zed-rules-sync remove "Code Style"` cleans up the UI-created duplicate.
+- `sync --prune` and `remove --managed` only touch rules this tool created, so
+  they're safe to run on a mixed library.
+
 ## Keeping Up with Zed
 
 The tool mirrors Zed's `prompt_store` schema. Specifically:

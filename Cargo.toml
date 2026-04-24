@@ -1,0 +1,16 @@
+[package]
+name = "zed-rules-sync"
+version = "0.1.0"
+edition = "2021"
+description = "Sync markdown rule files into Zed's Rules Library"
+license = "MIT"
+repository = "https://github.com/tmcinerney/zed-rules-sync"
+
+[dependencies]
+heed = "0.20"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "v5", "serde"] }
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }

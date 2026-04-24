@@ -79,6 +79,7 @@ drift.
             rules = ./rules;       # directory of .md files
             defaultRules = false;   # true = auto-include in every agent thread
             prune = true;           # remove managed rules whose source is gone
+            dbPath = ./path/to/zed/prompts/prompts-library-db.0.mdb; # optional: override default DB location
           };
         }
       ];

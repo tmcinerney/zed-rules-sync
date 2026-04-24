@@ -37,12 +37,17 @@ in
     };
 
     dbPath = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
+      type = lib.types.nullOr lib.types.str;
       default = null;
+      example = "/home/you/.config/zed-preview/prompts/prompts-library-db.0.mdb";
       description = ''
-        Override the path to Zed's prompt store LMDB database. Useful for
-        Zed Preview, a custom XDG_CONFIG_HOME, or sandboxed installs. When
-        null, the CLI falls back to its default location.
+        Absolute path to Zed's prompt store LMDB database, as a string.
+        Useful for Zed Preview, a custom XDG_CONFIG_HOME, or sandboxed
+        installs. When null, the CLI falls back to its default location.
+
+        Passed as-is to the CLI at activation time, so a string is used
+        instead of a Nix path - a Nix path literal would be copied into
+        the store, which isn't what you want for a runtime target.
       '';
     };
   };

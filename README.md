@@ -173,8 +173,8 @@ If you manually create a rule titled `Code Style` in Zed, then sync a
 ```
 zed-rules-sync list
 TITLE         DEFAULT  MANAGED  UUID
-code-style    no       yes      ...
-Code Style    no       no       ...
+Code Style    no       yes      55301176-...   (synced from code-style.md)
+Code Style    no       no       a1b2c3d4-...   (created in Zed's UI)
 ```
 
 - `remove` matches by title and works on either kind, so

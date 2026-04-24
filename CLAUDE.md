@@ -14,6 +14,24 @@ Distributed as a Nix flake with a Home Manager module. Users pin by git tag.
   after `writeBoundary` on every HM generation switch.
 - `flake.nix` — package (crane), overlay, HM module, devShell.
 
+The flake build uses `craneLib.cleanCargoSource ./.`, so anything
+outside cargo-tracked sources (this file, `README.md`, `nix/`,
+workflows) is excluded from the built derivation. That's why
+docs-only changes can ship on `main` without cutting a tag — the
+package output is byte-identical.
+
+## Toolchain
+
+Two Rust toolchains are in play intentionally:
+
+- `devenv shell` uses `rust-overlay`'s stable channel (newer, for
+  local ergonomics).
+- `nix develop` and `nix build` use nixpkgs' pinned rustc (older,
+  what CI runs and what end users build against).
+
+If CI shows a version different from your local, that's expected.
+The flake is the source of truth for consumer-visible builds.
+
 ## Dev workflow
 
 - `devenv shell` — primary dev shell. Provides cargo, clippy, rustfmt,
@@ -66,3 +84,8 @@ that something changed. So:
 - The Zed LMDB schema names (`metadata.v2`, `bodies.v2`) in `src/db.rs`.
   They track Zed upstream — if Zed moves to `v3`, the tool's job is to
   detect the change and refuse to write, not to migrate automatically.
+- The `heed` major version in `Cargo.toml`. It's pinned to match the
+  version Zed uses so the LMDB on-disk format stays binary-compatible
+  with Zed's reader. Don't `cargo update` heed to a new major without
+  verifying Zed's current version and testing against a real prompt
+  DB. A silent bump here could corrupt user data.

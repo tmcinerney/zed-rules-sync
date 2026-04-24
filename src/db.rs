@@ -120,12 +120,26 @@ pub fn default_db_path() -> PathBuf {
         .join("prompts-library-db.0.mdb")
 }
 
+fn is_zed_process_name(name: &str) -> bool {
+    matches!(name, "Zed" | "zed" | "zeditor")
+}
+
 pub fn is_zed_running() -> bool {
-    std::process::Command::new("pgrep")
-        .args(["-x", "Zed"])
+    let Ok(output) = std::process::Command::new("pgrep")
+        .args(["-l", "."])
         .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    stdout.lines().any(|line| {
+        line.split_whitespace()
+            .nth(1)
+            .is_some_and(is_zed_process_name)
+    })
 }
 
 #[cfg(test)]
@@ -163,5 +177,26 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let missing = tmp.path().join("does-not-exist");
         assert!(RulesDb::open_readonly(&missing).is_err());
+    }
+
+    #[test]
+    fn is_zed_process_name_matches_known_names() {
+        assert!(is_zed_process_name("Zed"));
+        assert!(is_zed_process_name("zed"));
+        assert!(is_zed_process_name("zeditor"));
+    }
+
+    #[test]
+    fn is_zed_process_name_rejects_near_misses() {
+        assert!(!is_zed_process_name(""));
+        assert!(!is_zed_process_name("zedfoo"));
+        assert!(!is_zed_process_name("Zeditor"));
+    }
+
+    #[test]
+    fn is_zed_process_name_rejects_unrelated_names() {
+        assert!(!is_zed_process_name("code"));
+        assert!(!is_zed_process_name("firefox"));
+        assert!(!is_zed_process_name("cursor"));
     }
 }

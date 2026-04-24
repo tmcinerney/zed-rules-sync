@@ -3,6 +3,28 @@
 Small Rust CLI that syncs `.md` files into Zed's LMDB-backed prompt store.
 Distributed as a Nix flake with a Home Manager module. Users pin by git tag.
 
+## Architecture
+
+- `src/main.rs` — CLI surface (clap). Delegates to `db` + `types`.
+- `src/db.rs` — `RulesDb` wrapping heed/LMDB. Opens Zed's `metadata.v2`
+  and `bodies.v2` databases.
+- `src/types.rs` — serde shapes, namespace/UUID derivation, and
+  `is_managed()`. See Invariants.
+- `nix/hm-module.nix` — Home Manager module. Activation runs `sync`
+  after `writeBoundary` on every HM generation switch.
+- `flake.nix` — package (crane), overlay, HM module, devShell.
+
+## Dev workflow
+
+- `devenv shell` — primary dev shell. Provides cargo, clippy, rustfmt,
+  typos, nixfmt-rfc-style, actionlint.
+- `nix develop` — alternative shell via flake.nix's devShells.default.
+  What CI uses.
+- Full local verification:
+  `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test && nix build .#default`
+- Pre-commit hooks are auto-installed by devenv and enforced on
+  `git commit`. Don't bypass with `--no-verify`.
+
 ## Release discipline
 
 Users discover changes through git tags. A tag is the only reliable signal

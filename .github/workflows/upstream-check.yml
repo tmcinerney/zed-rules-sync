@@ -1,0 +1,69 @@
+name: Upstream compatibility check
+
+on:
+  schedule:
+    - cron: "0 9 * * 1" # Weekly on Monday 9am UTC
+  workflow_dispatch: # Manual trigger
+
+jobs:
+  check-zed-upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check Zed upstream for breaking changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          ISSUES=""
+
+          # 1. Check heed version
+          ZED_HEED=$(curl -sf https://raw.githubusercontent.com/zed-industries/zed/main/Cargo.toml \
+            | grep -m1 '^heed' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          OUR_HEED=$(grep -m1 '^heed' Cargo.toml | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          echo "Zed heed: $ZED_HEED, ours: $OUR_HEED"
+          ZED_MAJOR=$(echo "$ZED_HEED" | cut -d. -f1-2)
+          OUR_MAJOR=$(echo "$OUR_HEED" | cut -d. -f1-2)
+          if [ "$ZED_MAJOR" != "$OUR_MAJOR" ]; then
+            ISSUES="$ISSUES\n- heed version drift: Zed=$ZED_HEED, ours=$OUR_HEED"
+          fi
+
+          # 2. Check schema names
+          STORE=$(curl -sf https://raw.githubusercontent.com/zed-industries/zed/main/crates/prompt_store/src/prompt_store.rs)
+          if ! echo "$STORE" | grep -q '"metadata.v2"'; then
+            ISSUES="$ISSUES\n- metadata.v2 no longer found in prompt_store.rs"
+          fi
+          if ! echo "$STORE" | grep -q '"bodies.v2"'; then
+            ISSUES="$ISSUES\n- bodies.v2 no longer found in prompt_store.rs"
+          fi
+
+          # 3. Check PromptId shape (tag = "kind", User + BuiltIn variants)
+          if ! echo "$STORE" | grep -q 'tag = "kind"'; then
+            ISSUES="$ISSUES\n- PromptId serde tag changed (was: kind)"
+          fi
+
+          # 4. Check DB path
+          PATHS=$(curl -sf https://raw.githubusercontent.com/zed-industries/zed/main/crates/paths/src/paths.rs || echo "")
+          if [ -n "$PATHS" ] && ! echo "$PATHS" | grep -q 'prompts-library-db.0.mdb'; then
+            ISSUES="$ISSUES\n- DB path may have changed (prompts-library-db.0.mdb not found in paths.rs)"
+          fi
+
+          # Report
+          if [ -n "$ISSUES" ]; then
+            echo "::warning::Upstream drift detected"
+            echo "$ISSUES"
+            {
+              echo "The weekly upstream check found potential breaking changes in Zed:"
+              echo ""
+              echo "$ISSUES"
+              echo ""
+              echo "Upstream source: https://github.com/zed-industries/zed/blob/main/crates/prompt_store/src/prompt_store.rs"
+            } > /tmp/issue-body.md
+            gh issue create \
+              --title "Upstream drift: Zed prompt_store may have changed" \
+              --body-file /tmp/issue-body.md \
+              --label "upstream"
+          else
+            echo "All clear — no upstream drift detected."
+          fi

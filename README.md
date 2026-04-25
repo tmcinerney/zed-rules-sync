@@ -121,6 +121,21 @@ zed-rules-sync sync ./rules --dry-run
 zed-rules-sync sync ./rules --recursive
 ```
 
+Rule files can override the sync-wide default setting with YAML-style
+frontmatter:
+
+```md
+---
+default: true
+---
+
+Use this rule in every new Agent Panel interaction.
+```
+
+Set `default: false` to keep a rule out of the default context even when
+running `sync --default` or setting `defaultRules = true` in Home Manager.
+The frontmatter is stripped before the rule body is written to Zed.
+
 When `--recursive` is set, subdirectories of the source path are walked for
 `.md` files. Because rule UUIDs are derived from filenames alone, two files
 with the same basename (e.g. `rules/a/foo.md` and `rules/b/foo.md`) would
@@ -213,9 +228,9 @@ for breaking changes to the prompt store.
 
 - **Restart required** — Zed caches the Rules Library in memory at startup.
   Changes made by `zed-rules-sync` are not visible until Zed is restarted.
-- **Default flag is per-rule metadata** — marking a rule as `--default` sets it
-  in the LMDB metadata. It won't retroactively apply to already-open agent
-  threads.
+- **Default flag is per-rule metadata** — marking a rule as `--default`, or
+  setting `default: true` in rule frontmatter, sets it in the LMDB metadata.
+  It won't retroactively apply to already-open agent threads.
 - **LMDB single-writer** — if Zed is actively writing to the prompt store at
   the exact moment the tool runs, the write may fail. In practice this is rare
   since Zed writes at startup and on explicit user action.

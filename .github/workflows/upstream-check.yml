@@ -9,7 +9,7 @@ jobs:
   check-zed-upstream:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
 
       - name: Check Zed upstream for breaking changes
         env:

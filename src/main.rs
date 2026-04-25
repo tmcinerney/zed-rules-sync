@@ -133,8 +133,7 @@ fn cmd_sync(
     for (filename, filepath) in &md_files {
         let id = prompt_id_for_filename(filename);
         let title = title_from_filename(filename);
-        let body = std::fs::read_to_string(filepath)
-            .with_context(|| format!("failed to read {}", filepath.display()))?;
+        let (rule_default, body) = parse_rule_file(filepath, default)?;
         synced.insert(filename.clone());
         let exists = db
             .as_ref()
@@ -142,13 +141,14 @@ fn cmd_sync(
             .unwrap_or(false);
         if dry_run {
             println!(
-                "  {}: {} ({})",
+                "  {}: {} ({}, default: {})",
                 if exists { "update" } else { "create" },
                 title,
-                filename
+                filename,
+                if rule_default { "yes" } else { "no" }
             );
         } else if let Some(ref db) = db {
-            db.upsert_rule(id, &title, default, &body)?;
+            db.upsert_rule(id, &title, rule_default, &body)?;
         }
         if exists {
             updated += 1;
@@ -240,6 +240,66 @@ fn cmd_remove(
     let p = if dry_run { "Would remove" } else { "Removed" };
     println!("\n{} {} rule(s).", p, removed);
     Ok(())
+}
+
+fn parse_rule_file(path: &PathBuf, fallback_default: bool) -> Result<(bool, String)> {
+    let contents = std::fs::read_to_string(path)
+        .with_context(|| format!("failed to read {}", path.display()))?;
+    parse_rule_contents(&contents, fallback_default)
+        .with_context(|| format!("failed to parse frontmatter in {}", path.display()))
+}
+
+fn parse_rule_contents(contents: &str, fallback_default: bool) -> Result<(bool, String)> {
+    let Some(after_opening_delimiter) = contents
+        .strip_prefix("---\n")
+        .or_else(|| contents.strip_prefix("---\r\n"))
+    else {
+        return Ok((fallback_default, contents.to_string()));
+    };
+
+    let mut rule_default = fallback_default;
+    let mut cursor = contents.len() - after_opening_delimiter.len();
+
+    while cursor <= contents.len() {
+        let line_end = contents[cursor..]
+            .find('\n')
+            .map(|offset| cursor + offset)
+            .unwrap_or(contents.len());
+        let line = &contents[cursor..line_end];
+        let trimmed = line.trim();
+
+        if trimmed == "---" {
+            let body_start = if line_end < contents.len() {
+                line_end + 1
+            } else {
+                line_end
+            };
+            return Ok((rule_default, contents[body_start..].to_string()));
+        }
+
+        if let Some(value) = trimmed.strip_prefix("default:") {
+            let normalized = value
+                .trim()
+                .trim_matches('"')
+                .trim_matches('\'')
+                .to_ascii_lowercase();
+            rule_default = match normalized.as_str() {
+                "true" | "yes" => true,
+                "false" | "no" => false,
+                _ => anyhow::bail!(
+                    "invalid frontmatter default value {:?}; expected true or false",
+                    value.trim()
+                ),
+            };
+        }
+
+        if line_end == contents.len() {
+            break;
+        }
+        cursor = line_end + 1;
+    }
+
+    Ok((fallback_default, contents.to_string()))
 }
 
 fn collect_md_files(path: &PathBuf, recursive: bool) -> Result<Vec<(String, PathBuf)>> {
@@ -351,6 +411,45 @@ mod tests {
         let files = collect_md_files(&root.to_path_buf(), false).unwrap();
         let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
         assert_eq!(names, vec!["top.md"]);
+    }
+
+    #[test]
+    fn frontmatter_default_overrides_cli_default_and_is_stripped() {
+        let contents = "---\ndefault: true\n---\nUse this rule.\n";
+        let (default, body) = parse_rule_contents(contents, false).unwrap();
+
+        assert!(default);
+        assert_eq!(body, "Use this rule.\n");
+    }
+
+    #[test]
+    fn frontmatter_default_false_overrides_cli_default() {
+        let contents = "---\ndefault: false\n---\nUse this rule.\n";
+        let (default, body) = parse_rule_contents(contents, true).unwrap();
+
+        assert!(!default);
+        assert_eq!(body, "Use this rule.\n");
+    }
+
+    #[test]
+    fn missing_frontmatter_uses_cli_default() {
+        let contents = "Use this rule.\n";
+        let (default, body) = parse_rule_contents(contents, true).unwrap();
+
+        assert!(default);
+        assert_eq!(body, "Use this rule.\n");
+    }
+
+    #[test]
+    fn invalid_frontmatter_default_errors() {
+        let err = parse_rule_contents("---\ndefault: maybe\n---\nUse this rule.\n", false)
+            .expect_err("expected invalid default error");
+
+        assert!(
+            format!("{}", err).contains("invalid frontmatter default value"),
+            "err: {}",
+            err
+        );
     }
 
     #[test]

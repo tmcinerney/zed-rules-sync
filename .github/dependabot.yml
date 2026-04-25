@@ -1,0 +1,30 @@
+version: 2
+updates:
+  # Rust crate dependencies
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    # heed is pinned to match Zed's upstream LMDB format.
+    # Never auto-bump — the upstream-check workflow monitors for drift.
+    ignore:
+      - dependency-name: heed
+    labels:
+      - dependencies
+      - automated
+    commit-message:
+      prefix: "deps(cargo)"
+
+  # GitHub Actions versions
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - automated
+    commit-message:
+      prefix: "deps(actions)"

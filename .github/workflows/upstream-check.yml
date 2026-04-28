@@ -17,49 +17,70 @@ jobs:
         run: |
           set -euo pipefail
           ISSUES=""
+          NL=$'\n'
+
+          # Match `heed = ...` whether top-level or indented under
+          # [workspace.dependencies]. Accept 2- or 3-part versions.
+          HEED_LINE_RE='^[[:space:]]*heed[[:space:]]*='
+          VERSION_RE='[0-9]+\.[0-9]+(\.[0-9]+)?'
 
           # 1. Check heed version
-          ZED_HEED=$(curl -sf https://raw.githubusercontent.com/zed-industries/zed/main/Cargo.toml \
-            | grep -m1 '^heed' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-          OUR_HEED=$(grep -m1 '^heed' Cargo.toml | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-          echo "Zed heed: $ZED_HEED, ours: $OUR_HEED"
-          ZED_MAJOR=$(echo "$ZED_HEED" | cut -d. -f1-2)
-          OUR_MAJOR=$(echo "$OUR_HEED" | cut -d. -f1-2)
-          if [ "$ZED_MAJOR" != "$OUR_MAJOR" ]; then
-            ISSUES="$ISSUES\n- heed version drift: Zed=$ZED_HEED, ours=$OUR_HEED"
+          ZED_CARGO=$(curl -sf https://raw.githubusercontent.com/zed-industries/zed/main/Cargo.toml || true)
+          ZED_HEED=$(printf '%s\n' "$ZED_CARGO" | grep -m1 -E "$HEED_LINE_RE" | grep -oE "$VERSION_RE" | head -n1 || true)
+          OUR_HEED=$(grep -m1 -E "$HEED_LINE_RE" Cargo.toml | grep -oE "$VERSION_RE" | head -n1 || true)
+          echo "Zed heed: ${ZED_HEED:-<unknown>}, ours: ${OUR_HEED:-<unknown>}"
+          if [ -z "$ZED_HEED" ]; then
+            ISSUES="$ISSUES$NL- could not detect heed version in Zed Cargo.toml (parser may need updating)"
+          fi
+          if [ -z "$OUR_HEED" ]; then
+            ISSUES="$ISSUES$NL- could not detect heed version in our Cargo.toml (parser may need updating)"
+          fi
+          if [ -n "$ZED_HEED" ] && [ -n "$OUR_HEED" ]; then
+            ZED_MAJOR=$(echo "$ZED_HEED" | cut -d. -f1-2)
+            OUR_MAJOR=$(echo "$OUR_HEED" | cut -d. -f1-2)
+            if [ "$ZED_MAJOR" != "$OUR_MAJOR" ]; then
+              ISSUES="$ISSUES$NL- heed version drift: Zed=$ZED_HEED, ours=$OUR_HEED"
+            fi
           fi
 
-          # 2. Check schema names
-          STORE=$(curl -sf https://raw.githubusercontent.com/zed-industries/zed/main/crates/prompt_store/src/prompt_store.rs)
-          if ! echo "$STORE" | grep -q '"metadata.v2"'; then
-            ISSUES="$ISSUES\n- metadata.v2 no longer found in prompt_store.rs"
-          fi
-          if ! echo "$STORE" | grep -q '"bodies.v2"'; then
-            ISSUES="$ISSUES\n- bodies.v2 no longer found in prompt_store.rs"
+          # 2. Check schema names + PromptId shape
+          STORE=$(curl -sf https://raw.githubusercontent.com/zed-industries/zed/main/crates/prompt_store/src/prompt_store.rs || true)
+          if [ -z "$STORE" ]; then
+            ISSUES="$ISSUES$NL- could not fetch prompt_store.rs (file may have moved or been renamed)"
+          else
+            if ! echo "$STORE" | grep -q '"metadata.v2"'; then
+              ISSUES="$ISSUES$NL- metadata.v2 no longer found in prompt_store.rs"
+            fi
+            if ! echo "$STORE" | grep -q '"bodies.v2"'; then
+              ISSUES="$ISSUES$NL- bodies.v2 no longer found in prompt_store.rs"
+            fi
+            # PromptId shape: tag = "kind", User + BuiltIn variants
+            if ! echo "$STORE" | grep -q 'tag = "kind"'; then
+              ISSUES="$ISSUES$NL- PromptId serde tag changed (was: kind)"
+            fi
           fi
 
-          # 3. Check PromptId shape (tag = "kind", User + BuiltIn variants)
-          if ! echo "$STORE" | grep -q 'tag = "kind"'; then
-            ISSUES="$ISSUES\n- PromptId serde tag changed (was: kind)"
-          fi
-
-          # 4. Check DB path
-          PATHS=$(curl -sf https://raw.githubusercontent.com/zed-industries/zed/main/crates/paths/src/paths.rs || echo "")
+          # 3. Check DB path
+          PATHS=$(curl -sf https://raw.githubusercontent.com/zed-industries/zed/main/crates/paths/src/paths.rs || true)
           if [ -n "$PATHS" ] && ! echo "$PATHS" | grep -q 'prompts-library-db.0.mdb'; then
-            ISSUES="$ISSUES\n- DB path may have changed (prompts-library-db.0.mdb not found in paths.rs)"
+            ISSUES="$ISSUES$NL- DB path may have changed (prompts-library-db.0.mdb not found in paths.rs)"
           fi
 
           # Report
           if [ -n "$ISSUES" ]; then
             echo "::warning::Upstream drift detected"
-            echo "$ISSUES"
+            printf '%s\n' "$ISSUES"
             {
               echo "The weekly upstream check found potential breaking changes in Zed:"
               echo ""
-              echo "$ISSUES"
+              printf '%s\n' "$ISSUES"
               echo ""
               echo "Upstream source: https://github.com/zed-industries/zed/blob/main/crates/prompt_store/src/prompt_store.rs"
             } > /tmp/issue-body.md
+            gh label create upstream \
+              --color ededed \
+              --description "Tracks Zed upstream drift" \
+              --force
             gh issue create \
               --title "Upstream drift: Zed prompt_store may have changed" \
               --body-file /tmp/issue-body.md \

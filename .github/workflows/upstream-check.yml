@@ -58,12 +58,11 @@ jobs:
             if ! echo "$STORE" | grep -q 'tag = "kind"'; then
               ISSUES="$ISSUES$NL- PromptId serde tag changed (was: kind)"
             fi
-          fi
-
-          # 3. Check DB path
-          PATHS=$(curl -sf https://raw.githubusercontent.com/zed-industries/zed/main/crates/paths/src/paths.rs || true)
-          if [ -n "$PATHS" ] && ! echo "$PATHS" | grep -q 'prompts-library-db.0.mdb'; then
-            ISSUES="$ISSUES$NL- DB path may have changed (prompts-library-db.0.mdb not found in paths.rs)"
+            # DB filename — constructed in prompt_store.rs as
+            #   paths::prompts_dir().join("prompts-library-db.0.mdb")
+            if ! echo "$STORE" | grep -q 'prompts-library-db.0.mdb'; then
+              ISSUES="$ISSUES$NL- DB filename may have changed (prompts-library-db.0.mdb not found in prompt_store.rs)"
+            fi
           fi
 
           # Report

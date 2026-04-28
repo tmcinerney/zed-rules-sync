@@ -5,6 +5,10 @@ on:
     - cron: "0 9 * * 1" # Weekly on Monday 9am UTC
   workflow_dispatch: # Manual trigger
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   check-zed-upstream:
     runs-on: ubuntu-latest
@@ -17,53 +21,131 @@ jobs:
         run: |
           set -euo pipefail
           ISSUES=""
+          NL=$'\n'
+
+          # Match `heed = ...` whether top-level or indented under
+          # [workspace.dependencies]. Accept 2- or 3-part versions.
+          HEED_LINE_RE='^[[:space:]]*heed[[:space:]]*='
+          VERSION_RE='[0-9]+\.[0-9]+(\.[0-9]+)?'
+
+          # Pin the Zed SHA at run time so the issue body's permalinks
+          # stay valid even after Zed pushes new commits to main.
+          ZED_SHA=$(curl -sf https://api.github.com/repos/zed-industries/zed/commits/main \
+            -H "Accept: application/vnd.github+json" \
+            | grep -oE '"sha":[[:space:]]*"[a-f0-9]{40}"' \
+            | head -n1 \
+            | grep -oE '[a-f0-9]{40}' || true)
+          ZED_REF=${ZED_SHA:-main}
+          echo "Pinned Zed ref: $ZED_REF"
 
           # 1. Check heed version
-          ZED_HEED=$(curl -sf https://raw.githubusercontent.com/zed-industries/zed/main/Cargo.toml \
-            | grep -m1 '^heed' | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-          OUR_HEED=$(grep -m1 '^heed' Cargo.toml | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
-          echo "Zed heed: $ZED_HEED, ours: $OUR_HEED"
-          ZED_MAJOR=$(echo "$ZED_HEED" | cut -d. -f1-2)
-          OUR_MAJOR=$(echo "$OUR_HEED" | cut -d. -f1-2)
-          if [ "$ZED_MAJOR" != "$OUR_MAJOR" ]; then
-            ISSUES="$ISSUES\n- heed version drift: Zed=$ZED_HEED, ours=$OUR_HEED"
+          ZED_CARGO=$(curl -sf "https://raw.githubusercontent.com/zed-industries/zed/$ZED_REF/Cargo.toml" || true)
+          ZED_HEED=$(printf '%s\n' "$ZED_CARGO" | grep -m1 -E "$HEED_LINE_RE" | grep -oE "$VERSION_RE" | head -n1 || true)
+          OUR_HEED=$(grep -m1 -E "$HEED_LINE_RE" Cargo.toml | grep -oE "$VERSION_RE" | head -n1 || true)
+          echo "Zed heed: ${ZED_HEED:-<unknown>}, ours: ${OUR_HEED:-<unknown>}"
+          if [ -z "$ZED_HEED" ]; then
+            ISSUES="$ISSUES$NL- could not detect heed version in Zed Cargo.toml (parser may need updating)"
+          fi
+          if [ -z "$OUR_HEED" ]; then
+            ISSUES="$ISSUES$NL- could not detect heed version in our Cargo.toml (parser may need updating)"
+          fi
+          HEED_DRIFT=0
+          if [ -n "$ZED_HEED" ] && [ -n "$OUR_HEED" ]; then
+            ZED_MAJOR=$(echo "$ZED_HEED" | cut -d. -f1-2)
+            OUR_MAJOR=$(echo "$OUR_HEED" | cut -d. -f1-2)
+            if [ "$ZED_MAJOR" != "$OUR_MAJOR" ]; then
+              ISSUES="$ISSUES$NL- heed version drift: Zed=$ZED_HEED, ours=$OUR_HEED"
+              HEED_DRIFT=1
+            fi
           fi
 
-          # 2. Check schema names
-          STORE=$(curl -sf https://raw.githubusercontent.com/zed-industries/zed/main/crates/prompt_store/src/prompt_store.rs)
-          if ! echo "$STORE" | grep -q '"metadata.v2"'; then
-            ISSUES="$ISSUES\n- metadata.v2 no longer found in prompt_store.rs"
-          fi
-          if ! echo "$STORE" | grep -q '"bodies.v2"'; then
-            ISSUES="$ISSUES\n- bodies.v2 no longer found in prompt_store.rs"
-          fi
-
-          # 3. Check PromptId shape (tag = "kind", User + BuiltIn variants)
-          if ! echo "$STORE" | grep -q 'tag = "kind"'; then
-            ISSUES="$ISSUES\n- PromptId serde tag changed (was: kind)"
-          fi
-
-          # 4. Check DB path
-          PATHS=$(curl -sf https://raw.githubusercontent.com/zed-industries/zed/main/crates/paths/src/paths.rs || echo "")
-          if [ -n "$PATHS" ] && ! echo "$PATHS" | grep -q 'prompts-library-db.0.mdb'; then
-            ISSUES="$ISSUES\n- DB path may have changed (prompts-library-db.0.mdb not found in paths.rs)"
+          # 2. Check schema names + PromptId shape + DB filename
+          STORE=$(curl -sf "https://raw.githubusercontent.com/zed-industries/zed/$ZED_REF/crates/prompt_store/src/prompt_store.rs" || true)
+          if [ -z "$STORE" ]; then
+            ISSUES="$ISSUES$NL- could not fetch prompt_store.rs (file may have moved or been renamed)"
+          else
+            echo "$STORE" | grep -q '"metadata.v2"' \
+              || ISSUES="$ISSUES$NL- metadata.v2 no longer found in prompt_store.rs"
+            echo "$STORE" | grep -q '"bodies.v2"' \
+              || ISSUES="$ISSUES$NL- bodies.v2 no longer found in prompt_store.rs"
+            echo "$STORE" | grep -q 'tag = "kind"' \
+              || ISSUES="$ISSUES$NL- PromptId serde tag changed (was: kind)"
+            echo "$STORE" | grep -q 'prompts-library-db.0.mdb' \
+              || ISSUES="$ISSUES$NL- DB filename may have changed (prompts-library-db.0.mdb not found in prompt_store.rs)"
           fi
 
           # Report
-          if [ -n "$ISSUES" ]; then
-            echo "::warning::Upstream drift detected"
-            echo "$ISSUES"
-            {
-              echo "The weekly upstream check found potential breaking changes in Zed:"
-              echo ""
-              echo "$ISSUES"
-              echo ""
-              echo "Upstream source: https://github.com/zed-industries/zed/blob/main/crates/prompt_store/src/prompt_store.rs"
-            } > /tmp/issue-body.md
-            gh issue create \
-              --title "Upstream drift: Zed prompt_store may have changed" \
-              --body-file /tmp/issue-body.md \
-              --label "upstream"
-          else
+          if [ -z "$ISSUES" ]; then
             echo "All clear — no upstream drift detected."
+            exit 0
           fi
+
+          echo "::warning::Upstream drift detected"
+          printf '%s\n' "$ISSUES"
+
+          ZED_BLOB="https://github.com/zed-industries/zed/blob/$ZED_REF"
+          {
+            echo "The upstream check found potential breaking changes in Zed."
+            echo ""
+            echo "**Zed pinned at:** [\`${ZED_REF:0:12}\`]($ZED_BLOB)"
+            echo "**Last checked:** $(date -u +'%Y-%m-%d %H:%M UTC')"
+            echo ""
+            echo "## Detected drift"
+            printf '%s\n' "$ISSUES"
+            echo ""
+            echo "## Versions"
+            echo ""
+            echo "| | ours | Zed |"
+            echo "|---|---|---|"
+            echo "| heed | \`${OUR_HEED:-<unknown>}\` | \`${ZED_HEED:-<unknown>}\` |"
+            echo ""
+            echo "## Upstream sources"
+            echo ""
+            echo "- [\`Cargo.toml\`]($ZED_BLOB/Cargo.toml)"
+            echo "- [\`crates/prompt_store/src/prompt_store.rs\`]($ZED_BLOB/crates/prompt_store/src/prompt_store.rs)"
+            echo "- [Zed releases](https://github.com/zed-industries/zed/releases)"
+            echo ""
+            if [ "$HEED_DRIFT" = "1" ]; then
+              echo "## Suggested commands (heed bump)"
+              echo ""
+              echo '```sh'
+              echo "# Edit Cargo.toml: heed = \"$ZED_HEED\""
+              echo "cargo update -p heed --precise $ZED_HEED"
+              echo "cargo build"
+              echo "cargo test"
+              echo "nix build .#default"
+              echo '```'
+              echo ""
+            fi
+            echo "## Before merging"
+            echo ""
+            echo "- [ ] Verified the drift type and resolution path"
+            echo "- [ ] heed pin in \`Cargo.toml\` updated to match Zed (if heed drift)"
+            echo "- [ ] \`cargo build && cargo test\` passes"
+            echo "- [ ] \`nix build .#default\` passes"
+            echo "- [ ] **Tested against a real Zed prompt DB** (CLAUDE.md invariant — silent heed bumps can corrupt user data)"
+            echo "- [ ] Version bump in \`Cargo.toml\` per release discipline"
+            echo "- [ ] Tag created and GitHub release published with migration notes"
+          } > /tmp/issue-body.md
+
+          # Idempotent label.
+          gh label create upstream \
+            --color ededed \
+            --description "Tracks Zed upstream drift" \
+            --force >/dev/null
+
+          # Dedupe: update the existing open tracking issue if one exists,
+          # otherwise create a new one. Keeps a single thread per drift episode.
+          TITLE="Upstream drift: Zed prompt_store may have changed"
+          EXISTING=$(gh issue list --label upstream --state open --limit 1 \
+            --json number --jq '.[0].number' || echo "")
+          if [ -n "$EXISTING" ]; then
+            echo "Updating existing tracking issue #$EXISTING"
+            gh issue edit "$EXISTING" --title "$TITLE" --body-file /tmp/issue-body.md
+          else
+            echo "Opening new tracking issue"
+            gh issue create --title "$TITLE" --body-file /tmp/issue-body.md --label "upstream"
+          fi
+
+          # Fail the run so the README badge turns red while drift persists.
+          exit 1

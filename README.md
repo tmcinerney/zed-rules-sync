@@ -1,5 +1,10 @@
 # zed-rules-sync
 
+[![CI](https://github.com/tmcinerney/zed-rules-sync/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/tmcinerney/zed-rules-sync/actions/workflows/ci.yml)
+[![Upstream compatibility](https://github.com/tmcinerney/zed-rules-sync/actions/workflows/upstream-check.yml/badge.svg)](https://github.com/tmcinerney/zed-rules-sync/actions/workflows/upstream-check.yml)
+[![Latest release](https://img.shields.io/github/v/release/tmcinerney/zed-rules-sync)](https://github.com/tmcinerney/zed-rules-sync/releases/latest)
+[![License: MIT](https://img.shields.io/github/license/tmcinerney/zed-rules-sync)](LICENSE)
+
 Sync markdown rule files into Zed's Rules Library from the command line.
 
 ## Why

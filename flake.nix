@@ -44,7 +44,7 @@
       });
 
       overlays.default = final: _prev: {
-        zed-rules-sync = self.packages.${final.system}.default;
+        zed-rules-sync = self.packages.${final.stdenv.hostPlatform.system}.default;
       };
 
       homeManagerModules.default = import ./nix/hm-module.nix self;
